@@ -1,0 +1,45 @@
+# SudarshanView Backend Dependencies
+# Core Framework
+Flask==2.3.2
+Flask-CORS==4.0.0
+
+# Computer Vision
+opencv-python==4.8.0.74
+opencv-contrib-python==4.8.0.74
+numpy==1.24.3
+
+# Barcode Processing
+pyzbar==0.1.9
+
+# Image Processing (for YOLO - optional)
+Pillow==10.0.0
+
+# HTTP Client
+requests==2.31.0
+
+# Database
+sqlite3  # Built into Python
+
+# Date/Time
+python-dateutil==2.8.2
+
+# Threading and Async (built-in modules used)
+# threading - built-in
+# time - built-in
+# datetime - built-in
+
+# System and OS
+# os - built-in
+# sys - built-in
+# json - built-in
+
+# Optional: For PostgreSQL support (uncomment if needed)
+# psycopg2-binary==2.9.7
+
+# Development Dependencies
+pytest==7.4.0
+pytest-flask==1.2.0
+
+# Optional: For production deployment
+gunicorn==21.2.0
+python-dotenv==1.0.0
