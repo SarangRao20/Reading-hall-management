@@ -102,4 +102,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 👥 Team
 
-Developed as part of the CEP (Capstone Engineering Project) initiative.
+Developed as part of the CEP (Community Engagement Program) initiative.
+
