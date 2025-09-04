@@ -1,0 +1,91 @@
+from ultralytics import YOLO
+import cv2
+
+# Load YOLOv8 model
+model = YOLO("yolov8n.pt")
+
+# Input video
+video_path = "test.mp4"
+cap = cv2.VideoCapture(video_path)
+
+def iou(boxA, boxB):
+    """Intersection-over-Union"""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    if interArea == 0:
+        return 0.0
+
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    return interArea / float(boxAArea + boxBArea - interArea)
+
+frame_no = 0
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    frame_no += 1
+
+    results = model(frame, verbose=False, conf=0.4)[0]
+
+    chairs, persons = [], []
+    for box in results.boxes:
+        cls_id = int(box.cls[0])
+        label = model.names[cls_id]
+        conf = float(box.conf[0])
+        if conf < 0.4:
+            continue
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+        if label == "chair":
+            chairs.append((x1, y1, x2, y2))
+        elif label == "person":
+            persons.append((x1, y1, x2, y2))
+            # Draw human in BLUE
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.putText(frame, "Person", (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+    occupied_count = 0
+    empty_count = 0
+
+    for idx, chair in enumerate(chairs):
+        (cx1, cy1, cx2, cy2) = chair
+        occupied = False
+        for person in persons:
+            if iou(chair, person) > 0.15:
+                occupied = True
+                break
+
+        if occupied:
+            color = (0, 0, 255)
+            status = "Occupied"
+            occupied_count += 1
+        else:
+            color = (0, 255, 0)
+            status = "Empty"
+            empty_count += 1
+
+        cv2.rectangle(frame, (cx1, cy1), (cx2, cy2), color, 2)
+        cv2.putText(frame, f"Seat {idx+1}: {status}", (cx1, cy1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    # Overlay summary bar
+    width = frame.shape[1]
+    cv2.rectangle(frame, (0, 0), (width, 40), (50, 50, 50), -1)
+    cv2.putText(frame,
+                f"Frame {frame_no} | Seats: {len(chairs)} | Occupied: {occupied_count} | Empty: {empty_count} | Persons: {len(persons)}",
+                (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    cv2.imshow("Seat & Human Detection", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
