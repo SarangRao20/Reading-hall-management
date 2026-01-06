@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reading Hall Seat Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom transitions for fill color */
+        path, rect, circle {
+            transition: fill 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans">
+
+    <!-- Navbar -->
+    <nav class="bg-gray-800 border-b border-gray-700 p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-bold text-blue-400">Reading Hall Monitor</h1>
+            <div class="flex space-x-4">
+                <div class="flex items-center">
+                    <span class="w-3 h-3 bg-green-500 rounded-full mr-2"></span>
+                    <span class="text-sm text-gray-300">Occupied</span>
+                </div>
+                <div class="flex items-center">
+                    <span class="w-3 h-3 bg-red-500 rounded-full mr-2"></span>
+                    <span class="text-sm text-gray-300">Vacant</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container mx-auto p-6">
+        
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-gray-800 rounded-lg p-6 shadow-lg border-l-4 border-blue-500">
+                <h3 class="text-gray-400 text-sm uppercase tracking-wider">Total Seats</h3>
+                <p class="text-3xl font-bold mt-2" id="total-seats">--</p>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-6 shadow-lg border-l-4 border-green-500">
+                <h3 class="text-gray-400 text-sm uppercase tracking-wider">Occupied</h3>
+                <p class="text-3xl font-bold mt-2 text-green-400" id="occupied-seats">--</p>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-6 shadow-lg border-l-4 border-red-500">
+                <h3 class="text-gray-400 text-sm uppercase tracking-wider">Vacant</h3>
+                <p class="text-3xl font-bold mt-2 text-red-400" id="vacant-seats">--</p>
+            </div>
+        </div>
+
+        <!-- Map Container -->
+        <div class="bg-gray-800 rounded-lg p-6 shadow-lg flex justify-center overflow-auto">
+            <div id="svg-container" class="w-full max-w-5xl">
+                <!-- SVG will be injected here -->
+                <div class="animate-pulse flex justify-center items-center h-64 text-gray-500">
+                    Loading Map...
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const svgContainer = document.getElementById('svg-container');
+        const totalEl = document.getElementById('total-seats');
+        const occupiedEl = document.getElementById('occupied-seats');
+        const vacantEl = document.getElementById('vacant-seats');
+
+        // Fetch and inject SVG
+        async function loadSVG() {
+            try {
+                const response = await fetch('/static/501.svg');
+                const svgText = await response.text();
+                svgContainer.innerHTML = svgText;
+                
+                // Make SVG responsive
+                const svg = svgContainer.querySelector('svg');
+                if (svg) {
+                    svg.classList.add('w-full', 'h-auto');
+                }
+            } catch (error) {
+                console.error("Error loading SVG:", error);
+                svgContainer.innerHTML = '<div class="text-red-500">Error loading map</div>';
+            }
+        }
+
+        // Connect WebSocket
+        function connectWS() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log("Connected to WebSocket");
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateDashboard(data);
+            };
+
+            ws.onclose = () => {
+                console.log("Disconnected. Reconnecting in 2s...");
+                setTimeout(connectWS, 2000);
+            };
+        }
+
+        function updateDashboard(data) {
+            // Update Stats
+            totalEl.textContent = data.stats.total;
+            occupiedEl.textContent = data.stats.occupied;
+            vacantEl.textContent = data.stats.vacant;
+
+            // Update Map
+            const seats = data.seats;
+            for (const [seatId, status] of Object.entries(seats)) {
+                const element = document.getElementById(seatId);
+                if (element) {
+                    // Green for Occupied, Red for Vacant
+                    if (status === 'occupied') {
+                        element.setAttribute('fill', '#22c55e'); // Tailwind green-500
+                    } else {
+                        element.setAttribute('fill', '#ef4444'); // Tailwind red-500
+                    }
+                }
+            }
+        }
+
+        // Initialize
+        loadSVG().then(() => {
+            connectWS();
+        });
+
+    </script>
+</body>
+</html>
