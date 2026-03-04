@@ -1,9 +1,10 @@
+import argparse
+import logging
 import os
 import cv2
 import threading
 import asyncio
 import json
-import re
 import math
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -24,15 +25,25 @@ lock = threading.Lock()
 calibration_data = []
 fixed_chair_boxes = []
 is_calibrated = False
+# occupancy smoothing counters (number of consecutive frames seen occupied)
+occupancy_counters = {}
+OCCUPANCY_THRESHOLD_FRAMES = 3
 
 # Load Models
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-model = YOLO("yolov8m.pt")
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5)
 
-# Video source
+# this will be initialized once we know the model path
+model = None
+
+# Video source and configuration defaults (overridden by CLI args)
 VIDEO_PATH = "vedio3.mp4"
+MODEL_PATH = "yolov8m.pt"
+CONF_THRESHOLD = 0.4
+IOU_THRESHOLD = 0.5
+CALIBRATION_FRAMES = 45
+PORT = 8000
 
 # 6x5 Grid Layout (Rows x Columns)
 # Derived from SVG analysis
@@ -46,12 +57,15 @@ GRID_LAYOUT = [
 ALL_SEAT_IDS = [seat for row in GRID_LAYOUT for seat in row]
 
 def process_video():
-    global seat_status, is_calibrated, fixed_chair_boxes
+    """Background thread that reads frames, performs detection, calibration and updates
+    the shared seat_status dictionary."""
+    global seat_status, is_calibrated, fixed_chair_boxes, occupancy_counters
     cap = cv2.VideoCapture(VIDEO_PATH)
+    if not cap.isOpened():
+        logging.error("Cannot open video source %s", VIDEO_PATH)
+        return
     frame_count = 0
-    CALIBRATION_FRAMES = 45
-    
-    print("Starting video processing...")
+    logging.info("Starting video processing from %s", VIDEO_PATH)
     
     while True:
         ret, frame = cap.read()
@@ -62,7 +76,7 @@ def process_video():
         frame = cv2.resize(frame, (960, 540))
         
         # YOLO Detection
-        results = model(frame, verbose=False, conf=0.4)[0]
+        results = model(frame, verbose=False, conf=CONF_THRESHOLD, iou=IOU_THRESHOLD)[0]
         chairs = []
         persons = []
         
@@ -70,7 +84,7 @@ def process_video():
             cls_id = int(box.cls[0])
             label = model.names[cls_id]
             conf = float(box.conf[0])
-            if conf < 0.4:
+            if conf < CONF_THRESHOLD:
                 continue
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             if label == "chair":
@@ -212,10 +226,13 @@ def process_video():
             for p_idx, person_box in enumerate(persons):
                 if person_statuses[p_idx] == "Sitting":
                     px1, py1, px2, py2 = person_box
-                    ix1 = max(cx1, px1)
-                    iy1 = max(cy1, py1)
-                    ix2 = min(cx2, px2)
-                    iy2 = min(cy2, py2)
+                    # consider bottom half of person when determining overlap
+                    bottom_py = py1 + (py2 - py1) * 0.5
+                    bx1, by1, bx2, by2 = px1, int(bottom_py), px2, py2
+                    ix1 = max(cx1, bx1)
+                    iy1 = max(cy1, by1)
+                    ix2 = min(cx2, bx2)
+                    iy2 = min(cy2, by2)
                     if ix2 > ix1 and iy2 > iy1:
                         intersection_area = (ix2 - ix1) * (iy2 - iy1)
                         chair_area = (cx2 - cx1) * (cy2 - cy1)
@@ -225,16 +242,19 @@ def process_video():
                             cv2.rectangle(frame, (cx1, cy1), (cx2, cy2), (0, 255, 0), 2)
                             break
         
-        # Update Global State
+        # Update Global State with smoothing
         new_status = {}
-        # Initialize all as vacant
         for seat_id in ALL_SEAT_IDS:
-            new_status[seat_id] = "vacant"
-            
-        # Update occupied ones
+            # use previous counter to decide occupancy
+            occ = occupancy_counters.get(seat_id, 0)
+            new_status[seat_id] = "occupied" if occ >= OCCUPANCY_THRESHOLD_FRAMES else "vacant"
+        # update counters
         for chair in fixed_chair_boxes:
-            if chair['id'] and chair['occupied']:
-                new_status[chair['id']] = "occupied"
+            if chair['id']:
+                if chair['occupied']:
+                    occupancy_counters[chair['id']] = occupancy_counters.get(chair['id'], 0) + 1
+                else:
+                    occupancy_counters[chair['id']] = 0
 
         with lock:
             seat_status = new_status
@@ -281,6 +301,38 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print("Client disconnected")
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Seat occupancy FastAPI server")
+    parser.add_argument("--video", default=VIDEO_PATH, help="Path to input video")
+    parser.add_argument("--model", default=MODEL_PATH, help="Path to YOLO model file")
+    parser.add_argument("--conf", type=float, default=CONF_THRESHOLD, help="YOLO confidence threshold")
+    parser.add_argument("--iou", type=float, default=IOU_THRESHOLD, help="YOLO IoU threshold")
+    parser.add_argument("--calib-frames", type=int, default=CALIBRATION_FRAMES, help="Frames to use for calibration")
+    parser.add_argument("--port", type=int, default=PORT, help="Port to serve on")
+    return parser.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
+    # apply args
+    VIDEO_PATH = args.video
+    MODEL_PATH = args.model
+    CONF_THRESHOLD = args.conf
+    IOU_THRESHOLD = args.iou
+    CALIBRATION_FRAMES = args.calib_frames
+    PORT = args.port
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.info("Starting application with video=%s model=%s", VIDEO_PATH, MODEL_PATH)
+
+    # load model after parsing
+    model = YOLO(MODEL_PATH)
+
+    # initialize occupancy counters for all seats
+    for sid in ALL_SEAT_IDS:
+        occupancy_counters[sid] = 0
+
+    thread = threading.Thread(target=process_video, daemon=True)
+    thread.start()
+
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

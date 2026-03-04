@@ -1,4 +1,5 @@
 import os
+import argparse
 import cv2
 from ultralytics import YOLO
 import mediapipe as mp
@@ -6,15 +7,34 @@ import mediapipe as mp
 # Suppress TensorFlow logs
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
+# Defaults (can be overridden via CLI)
+MODEL_PATH = "yolov8m.pt"
+VIDEO_PATH = "vedio3.mp4"
+CONF_THRESHOLD = 0.4
+IOU_THRESHOLD = 0.5
+
+# Parse command line arguments
+parser = argparse.ArgumentParser(description="Final test visualization")
+parser.add_argument("--video", default=VIDEO_PATH, help="Path to video file")
+parser.add_argument("--model", default=MODEL_PATH, help="Path to YOLO model")
+parser.add_argument("--conf", type=float, default=CONF_THRESHOLD, help="YOLO confidence")
+parser.add_argument("--iou", type=float, default=IOU_THRESHOLD, help="YOLO IoU")
+args = parser.parse_args()
+
+MODEL_PATH = args.model
+VIDEO_PATH = args.video
+CONF_THRESHOLD = args.conf
+IOU_THRESHOLD = args.iou
+
 # Load YOLOv8 model
-model = YOLO("yolov8m.pt")
+model = YOLO(MODEL_PATH)
 
 # Initialize Mediapipe Pose
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5)
 
 # Video source
-video_path = "vedio3.mp4"
+video_path = VIDEO_PATH
 cap = cv2.VideoCapture(video_path)
 
 # Ground truth values
@@ -35,14 +55,14 @@ while True:
 
     # Run YOLO only when not paused (avoid recomputation)
     if not paused:
-        results = model(frame, verbose=False, conf=0.4)[0]
+        results = model(frame, verbose=False, conf=CONF_THRESHOLD, iou=IOU_THRESHOLD)[0]
         chairs, persons = [], []
 
         for box in results.boxes:
             cls_id = int(box.cls[0])
             label = model.names[cls_id]
             conf = float(box.conf[0])
-            if conf < 0.4:
+            if conf < CONF_THRESHOLD:
                 continue
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             if label == "chair":
